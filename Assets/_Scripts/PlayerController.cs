@@ -10,6 +10,10 @@ public class PlayerController : MonoBehaviour
     [Header("位置追踪 (不要手动改)")]
     public Vector2Int currentGridPos; // <--- 这就是之前报错缺少的变量
     
+    [Header("视觉组件")] // --- 新增 ---
+    private SpriteRenderer myRenderer; // 自己的渲染器
+    private Sprite defaultSprite;      // 自己原本的图片 (没面具时的样子)
+    
     // [Header("配置 (请把做好的面具Prefab拖到这里)")]
     // public List<MaskPrefabMapping> maskPrefabs;
     
@@ -58,6 +62,12 @@ public class PlayerController : MonoBehaviour
         {
             TickManager.Instance.OnPlayerTick += HandleTickMovement;
             Debug.Log("成功连接到 TickManager (通过 Instance)");
+        }
+        
+        myRenderer = GetComponentInChildren<SpriteRenderer>(); // 获取身上的渲染器
+        if (myRenderer != null)
+        {
+            defaultSprite = myRenderer.sprite; // 记住现在的样子，作为默认皮肤
         }
     }
 
@@ -306,9 +316,23 @@ public class PlayerController : MonoBehaviour
         // 3. 捡面具
         if (targetNode.Collectible != null)
         {
-            var itemScript = targetNode.Collectible.GetComponent<Mask>(); // 假设这里改名叫ItemPickup了，如果是Mask请自行修正
+            var itemScript = targetNode.Collectible.GetComponent<Mask>(); 
             if (itemScript != null)
             {
+                // =========== 视觉替换逻辑 START ===========
+                // 1. 获取地上面具物体的渲染器
+                var itemRenderer = targetNode.Collectible.GetComponentInChildren<SpriteRenderer>();
+                
+                // 2. 如果找到了，就把它的 Sprite 拿过来给自己用
+                if (itemRenderer != null && myRenderer != null)
+                {
+                    myRenderer.sprite = itemRenderer.sprite;
+                    
+                    // (可选) 如果你的面具有颜色染色，也可以把颜色同步过来
+                    myRenderer.color = itemRenderer.color; 
+                }
+                // =========== 视觉替换逻辑 END =============
+
                 ChangeMask(itemScript.maskType); 
                 Destroy(targetNode.Collectible);
                 
@@ -377,5 +401,11 @@ public class PlayerController : MonoBehaviour
         
         // Masks are destroyed. you cannot leave them on ground.
         ChangeMask(MaskType.None);
+    }
+    
+    // 在 PlayerController 类里加入这个 getter
+    public List<Vector2Int> GetCurrentPath()
+    {
+        return finalPredictedPath;
     }
 }
