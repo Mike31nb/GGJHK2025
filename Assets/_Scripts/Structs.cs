@@ -1,5 +1,15 @@
 using UnityEngine;
 
+public enum MaskType
+{
+    None,   // 初始状态，可能只能走普通步
+    Turtle, // 只能走直线 (1格/2tick)
+    Ox,     // 只能走斜线 (1格)
+    Hawk,   // 车：直线走 (2格)
+    Fox,    // 马：L型走位 (2+1)
+    Dragon, // the overpowered
+}
+
 public enum TileType 
 {   
     Void = 0,      // Air/nothing
@@ -11,8 +21,9 @@ public enum TileType
 public struct GridNode 
 {
     public TileType Type;
-    public bool IsOccupied; // If there is enemy/pawn on top
-    public GameObject Occupant; // Who is on top
+    public bool IsOccupied; 
+    public GameObject Occupant; // 玩家或敌人
+    public GameObject Collectible; // 地上的面具 (Mask)
 }
 
 public class GameMap
