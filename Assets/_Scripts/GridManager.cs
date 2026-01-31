@@ -8,7 +8,7 @@ public class TileManager : MonoBehaviour
     [Header("Remember to give value to these")]
     public Tilemap floorMap; // 地面图层
     public Tilemap wallMap;  // 墙壁图层
-
+    public float GridLength = 1;
     public GameMap GameMap;  // 你的纯数据地图
 
     void Awake() 
@@ -26,6 +26,7 @@ public class TileManager : MonoBehaviour
         Vector2Int offset = new Vector2Int(bounds.xMin, bounds.yMin);
         GameMap = new GameMap(bounds.size.x, bounds.size.y, offset);
 
+        GameMap.GridLength = GridLength;
         // 3. Iteration
         foreach (var pos in bounds.allPositionsWithin)
         {

@@ -17,6 +17,7 @@ public struct GridNode
 
 public class GameMap
 {
+    public float GridLength;
     private GridNode[,] _nodes;
     private Vector2Int _offset;
     public int Width { get; private set; }
@@ -53,13 +54,21 @@ public class GameMap
         return arrayX >= 0 && arrayX < Width && arrayY >= 0 && arrayY < Height;
     }
     
-    public GridNode GetNodeFromWorldPos(Vector3 worldPos)
+    // 只负责把 World Vector3 变成 Grid Vector2Int
+    public Vector2Int WorldToGridPos(Vector3 worldPos)
     {
-        // 1. 把世界坐标转成整数坐标 (简单取整)
-        int x = Mathf.FloorToInt(worldPos.x);
-        int y = Mathf.FloorToInt(worldPos.y);
-    
-        // 2. 直接查询
-        return GetNode(new Vector2Int(x, y));
+        // 强烈建议用 RoundToInt 而不是 FloorToInt
+        // 防止 lerp 导致的 2.99999 被截断成 2
+        return new Vector2Int(
+            Mathf.RoundToInt(worldPos.x-0.5f), 
+            Mathf.RoundToInt(worldPos.y-0.5f)
+        );
+    }
+
+    public Vector3 GridToWorldPos(Vector2Int gridPos)
+    {
+        
+        // Can handle logic
+        return new Vector3(Mathf.RoundToInt(gridPos.x)+0.5f, Mathf.RoundToInt(gridPos.y)+0.5f, 0);
     }
 }
