@@ -52,4 +52,14 @@ public class GameMap
         int arrayY = gridPos.y - _offset.y;
         return arrayX >= 0 && arrayX < Width && arrayY >= 0 && arrayY < Height;
     }
+    
+    public GridNode GetNodeFromWorldPos(Vector3 worldPos)
+    {
+        // 1. 把世界坐标转成整数坐标 (简单取整)
+        int x = Mathf.FloorToInt(worldPos.x);
+        int y = Mathf.FloorToInt(worldPos.y);
+    
+        // 2. 直接查询
+        return GetNode(new Vector2Int(x, y));
+    }
 }
