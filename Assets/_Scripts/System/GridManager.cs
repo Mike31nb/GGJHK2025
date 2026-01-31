@@ -9,7 +9,7 @@ public class TileManager : MonoBehaviour
     public Tilemap floorMap; 
     public Tilemap wallMap;  
     public float GridLength = 1;
-    public GameMap GameMap;  
+    public GameMap GameMap;
 
     // --- 把原来的 Start 逻辑全部搬到这里 ---
     void Awake() 
