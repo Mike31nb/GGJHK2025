@@ -115,9 +115,12 @@ public class EnemyAI : MonoBehaviour
                         if (player.currentMask != this.enemyType)
                         {
                             // todo: GameOver
-                            Debug.Log($"<color=red>GAME OVER! Caught by {enemyType} at {checkPos}</color>");
-                            // 这里写死逻辑：比如重新加载场景，或者弹出UI
-                            // Destroy(player.gameObject); 
+                            Debug.Log($"Caught by {enemyType}");
+                            if (GameManager.Instance != null)
+                            {
+                                GameManager.Instance.TriggerGameOver(enemyType.ToString());
+                            }
+                            // player.gameObject.SetActive(false);
                         }
                     }
                 }
