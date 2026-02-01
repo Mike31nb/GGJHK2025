@@ -1,58 +1,79 @@
 using UnityEngine;
-using UnityEngine.UI;
 using System.Collections.Generic;
 
 public class PlayerDirectionUI : MonoBehaviour
 {
-    [Header("绑定")]
+    [Header("绑定 Player")]
     public PlayerController player;
-    
-    // 请在Inspector里把4个方向的箭头Sprite/Image拖进去
-    // 建议用 World Space Canvas 或者直接作为 Player 的子物体 SpriteRenderer
-    public GameObject arrowUp;
-    public GameObject arrowDown;
-    public GameObject arrowLeft;
-    public GameObject arrowRight;
 
-    [Header("颜色设置")]
-    public Color activeColor = new Color(1, 1, 1, 1f); // 高亮颜色
-    public Color inactiveColor = new Color(1, 1, 1, 0.2f); // 变暗颜色
+    [System.Serializable]
+    public struct ArrowSet
+    {
+        [Header("场景里的物体 (SpriteRenderer)")]
+        public SpriteRenderer targetRenderer; // 拖入场景里主角身边的那个箭头物体
+
+        [Header("三张状态图")]
+        public Sprite spriteLevel0; // 强度0：不走 (可以是空图，或者半透明的灰图)
+        public Sprite spriteLevel1; // 强度1：走1格 (短箭头)
+        public Sprite spriteLevel2; // 强度2：走2格及以上 (长箭头)
+    }
+
+    [Header("四个方向的配置")]
+    public ArrowSet upArrow;
+    public ArrowSet downArrow;
+    public ArrowSet leftArrow;
+    public ArrowSet rightArrow;
 
     void Update()
     {
         if (player == null) return;
 
-        // 重置所有箭头颜色
-        SetArrowColor(arrowUp, inactiveColor);
-        SetArrowColor(arrowDown, inactiveColor);
-        SetArrowColor(arrowLeft, inactiveColor);
-        SetArrowColor(arrowRight, inactiveColor);
-
-        // 获取玩家当前的预测路径
+        // 1. 获取预测路径
         List<Vector2Int> path = player.GetCurrentPath();
-        
-        if (path != null && path.Count > 0)
-        {
-            // 获取第一步的方向（通常这就够了，或者你可以遍历显示所有步）
-            Vector2Int firstStep = path[0];
 
-            if (firstStep == Vector2Int.up) SetArrowColor(arrowUp, activeColor);
-            else if (firstStep == Vector2Int.down) SetArrowColor(arrowDown, activeColor);
-            else if (firstStep == Vector2Int.left) SetArrowColor(arrowLeft, activeColor);
-            else if (firstStep == Vector2Int.right) SetArrowColor(arrowRight, activeColor);
+        // 2. 计算总位移 (Total Displacement)
+        // 比如 Fox 往右上跳: path可能是 [(0,1), (0,1), (1,0)] -> 总和 (1, 2)
+        // 意味着 X轴强度1，Y轴强度2
+        Vector2Int totalDelta = Vector2Int.zero;
+        if (path != null)
+        {
+            foreach (var step in path)
+            {
+                totalDelta += step;
+            }
         }
+
+        // 3. 根据位移量，更新四个方向的图片
+        // Y轴 (上下)
+        UpdateArrowSprite(upArrow, totalDelta.y);       // 正数是上
+        UpdateArrowSprite(downArrow, -totalDelta.y);    // 负数是下 (传进去转正)
+
+        // X轴 (左右)
+        UpdateArrowSprite(rightArrow, totalDelta.x);    // 正数是右
+        UpdateArrowSprite(leftArrow, -totalDelta.x);    // 负数是左
     }
 
-    void SetArrowColor(GameObject arrowObj, Color col)
+    // 统一处理函数
+    void UpdateArrowSprite(ArrowSet arrowSet, int value)
     {
-        if (arrowObj == null) return;
-        
-        // 如果是用 SpriteRenderer (世界坐标物体)
-        var sprite = arrowObj.GetComponent<SpriteRenderer>();
-        if (sprite != null) { sprite.color = col; return; }
+        if (arrowSet.targetRenderer == null) return;
 
-        // 如果是用 UI Image (Canvas)
-        var img = arrowObj.GetComponent<Image>();
-        if (img != null) { img.color = col; }
+        if (value <= 0)
+        {
+            // 没动静
+            arrowSet.targetRenderer.sprite = arrowSet.spriteLevel0;
+            // 如果你的 Level0 是空图，记得把颜色设为白色(如果不透明)或者透明
+            // 这里假设你 Level0 可能是一张灰色的底图
+        }
+        else if (value == 1)
+        {
+            // 走1格
+            arrowSet.targetRenderer.sprite = arrowSet.spriteLevel1;
+        }
+        else
+        {
+            // 走 >= 2格
+            arrowSet.targetRenderer.sprite = arrowSet.spriteLevel2;
+        }
     }
 }

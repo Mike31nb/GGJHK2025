@@ -9,33 +9,41 @@ public class GameManager : MonoBehaviour
     public static GameManager Instance;
 
     [Header("Game Settings")]
-    public int targetSurvivalTicks = 60; // 目标：坚持多少个Tick
+    public int targetSurvivalTicks = 60; 
     private int currentTicksPassed = 0;
+    
+    // --- 新增：下一关的名字 ---
+    [Header("Level Flow")]
+    [Tooltip("填入下一关的场景名字。Level1填Level2的名字，Level2填Level1的名字")]
+    public string nextLevelName; 
 
     [Header("UI References")]
-    public TMP_Text timerText;          // 倒计时文本
+    public TMP_Text timerText;          
     
     [Header("Game Over UI")]
-    public GameObject gameOverCanvas;   // 失败界面父物体
-    public Image loseBackgroundPanel;   // 失败背景
-    public TMP_Text killerText;         // "Killed by X"
-    public Button loseRestartButton;    // 失败重开按钮
+    public GameObject gameOverCanvas;   
+    public Image loseBackgroundPanel;   
+    public TMP_Text killerText;         
+    public Button loseRestartButton;    // 失败按钮：保持重开当前关
 
     [Header("Victory UI")]
-    public GameObject winCanvas;        // 胜利界面父物体
-    public Image winBackgroundPanel;    // 胜利背景
-    public Button winRestartButton;     // 胜利重开按钮
+    public GameObject winCanvas;        
+    public Image winBackgroundPanel;    
+    public Button winRestartButton;     // 胜利按钮：改为前往下一关
 
     void Awake()
     {
         Instance = this;
-        // 游戏开始时隐藏所有结算 UI
+        
         if (gameOverCanvas != null) gameOverCanvas.SetActive(false);
         if (winCanvas != null) winCanvas.SetActive(false);
         
-        // 绑定按钮事件
+        // --- 绑定逻辑修改 ---
+        // 失败：重玩当前关 (RestartGame)
         if (loseRestartButton != null) loseRestartButton.onClick.AddListener(RestartGame);
-        if (winRestartButton != null) winRestartButton.onClick.AddListener(RestartGame);
+        
+        // 胜利：去下一关 (LoadNextLevel)
+        if (winRestartButton != null) winRestartButton.onClick.AddListener(LoadNextLevel);
     }
 
     void Start()
@@ -63,7 +71,6 @@ public class GameManager : MonoBehaviour
         currentTicksPassed++;
         UpdateTimerUI();
 
-        // 检查胜利条件
         if (currentTicksPassed >= targetSurvivalTicks)
         {
             TriggerVictory();
@@ -82,7 +89,6 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // --- 失败逻辑 ---
     public void TriggerGameOver(string killerName)
     {
         if (TickManager.Instance.IsPaused) return; 
@@ -93,8 +99,6 @@ public class GameManager : MonoBehaviour
         if (gameOverCanvas != null)
         {
             gameOverCanvas.SetActive(true);
-            
-            // 先隐藏按钮，等待渐变结束
             if(loseRestartButton != null) loseRestartButton.gameObject.SetActive(false);
 
             if (killerText != null)
@@ -102,12 +106,10 @@ public class GameManager : MonoBehaviour
                 killerText.text = $"HUNTED BY\n<size=150%><color=red>{killerName.ToUpper()}</color></size>";
             }
             
-            // 【关键】把 loseRestartButton 传给协程，让协程最后负责显示它
             StartCoroutine(FadeInUI(loseBackgroundPanel, 0.9f, loseRestartButton));
         }
     }
 
-    // --- 胜利逻辑 ---
     public void TriggerVictory()
     {
         if (TickManager.Instance.IsPaused) return;
@@ -118,21 +120,20 @@ public class GameManager : MonoBehaviour
         if (winCanvas != null)
         {
             winCanvas.SetActive(true);
-
-            // 先隐藏按钮
             if(winRestartButton != null) winRestartButton.gameObject.SetActive(false);
 
-            // 【关键】把 winRestartButton 传给协程
+            // 修改文字提示 (可选)
+            // 你可以在这里把按钮上的文字改成 "Next Level"
+            
             StartCoroutine(FadeInUI(winBackgroundPanel, 0.9f, winRestartButton));
         }
     }
 
-    // --- 通用 UI 渐变 ---
     IEnumerator FadeInUI(Image panel, float targetAlpha, Button buttonToActivate)
     {
         if (panel == null) yield break;
 
-        panel.gameObject.SetActive(true); // 确保Panel是开着的
+        panel.gameObject.SetActive(true); 
 
         Color c = panel.color;
         c.a = 0;
@@ -153,16 +154,31 @@ public class GameManager : MonoBehaviour
         c.a = targetAlpha;
         panel.color = c;
 
-        // 渐变结束，这里负责把对应的按钮打开！
         if (buttonToActivate != null)
         {
             buttonToActivate.gameObject.SetActive(true);
         }
     }
 
+    // --- 失败时调用：重开当前场景 ---
     public void RestartGame()
     {
         SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        if (TickManager.Instance != null) TickManager.Instance.IsPaused = false;
+    }
+
+    // --- 胜利时调用：去下一关 ---
+    public void LoadNextLevel()
+    {
+        if (string.IsNullOrEmpty(nextLevelName))
+        {
+            Debug.LogError("【错误】你忘了在 Inspector 里填 Next Level Name！");
+            // 如果忘了填，就重开当前关保底
+            RestartGame(); 
+            return;
+        }
+
+        SceneManager.LoadScene(nextLevelName);
         if (TickManager.Instance != null) TickManager.Instance.IsPaused = false;
     }
 }

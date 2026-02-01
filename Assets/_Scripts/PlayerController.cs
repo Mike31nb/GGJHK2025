@@ -109,30 +109,32 @@ public class PlayerController : MonoBehaviour
         // if (rawInputStack.Count > 0) Debug.Log($"Input: {rawInputStack.Count}, Path: {finalPredictedPath.Count}");
     }
 
-    // --- 核心：处理输入堆栈逻辑 ---
+    // --- 核心：处理输入堆栈逻辑 (已修改) ---
     void AddInput(Vector2Int dir)
     {
-        // --- 安全隔离区 ---
-        // 简单面具完全不参与投票逻辑，保证绝对的原汁原味
-        if (currentMask == MaskType.Turtle || currentMask == MaskType.None)
+        // --- 修改点 1：把 Hawk 移到这里 ---
+        // Hawk 虽然走两步，但它是直线的，不需要像 Fox/Ox 那样搞 "W+D" 这种组合键。
+        // 所以让它和 Turtle/None 一样：新输入直接清空旧输入，瞬间响应，不需要按两次 D 才能顶掉 W。
+        if (currentMask == MaskType.Turtle || currentMask == MaskType.None || currentMask == MaskType.Hawk)
         {
             rawInputStack.Clear();
             rawInputStack.Add(dir);
-            RecalculatePath(); // 直接计算，不走复杂的投票
+            RecalculatePath(); // 直接计算
             return;
         }
 
-        // --- 复杂面具 (Ox, Fox, Hawk) 进入投票池 ---
+        // --- 复杂面具 (Ox, Fox) 进入投票池 ---
         Debug.Log($"Input: {dir}");
         
-        // 1. 反向抵消检查 (W + S = 0)
-        int cancelIndex = rawInputStack.LastIndexOf(-dir);
-        if (cancelIndex != -1)
-        {
-            rawInputStack.RemoveAt(cancelIndex);
-            RecalculatePath();
-            return;
-        }
+        // --- 修改点 2：反向键逻辑 ---
+        // 你的需求：不要点反方向就取消了，而是要“取消旧的+显示新的”
+        // 也就是：如果栈里有 W，我按 S，应该把 W 删干净，然后把 S 加进去。
+        
+        // 这一行代码会把栈里所有和当前按键相反的方向全删掉
+        // (例如：输入 Down，把所有的 Up 删掉)
+        rawInputStack.RemoveAll(x => x == -dir);
+        
+        // 注意：这里不再 return 了！删完旧的，继续往下把新的加进去！
         
         // 2. 堆叠逻辑 (最大容量 3)
         if (rawInputStack.Count < 3) 
