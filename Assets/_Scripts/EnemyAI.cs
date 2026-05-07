@@ -1,18 +1,40 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-public class EnemyAI : MonoBehaviour
+public class EnemyAI : MonoBehaviour, IRuaaaReceiver
 {
     [Header("类型")]
     public MaskType enemyType; 
     
     [Header("状态")]
     public Vector2Int currentGridPos;
-    private bool isTurtleResting = false; 
+    public bool enraged;
+    private Vector2Int plannedTargetPos;
+    private bool hasPlannedMove;
+
+    [Header("行动节奏")]
+    public int normalMoveInterval = 2;
+    public int turtleMoveInterval = 5;
+    private int nextPlanTick = 1;
+    private int plannedMoveTick;
 
     [Header("Sprite设置")]
     // 假设你的美术素材默认是头朝上的，如果默认朝右，这里填 0
-    public float spriteDefaultAngle = 90f; 
+    public float spriteDefaultAngle = 90f;
+
+    [Header("移动表现")]
+    public float moveAnimationDuration = 0.22f;
+    private Vector3 moveStartWorldPos;
+    private Vector3 moveTargetWorldPos;
+    private float moveAnimationTimer;
+    private bool isMoveAnimating;
+    private TickMoveVisuals moveVisuals;
+    private MoveTargetMarker targetMarker;
+    private SpriteRenderer[] spriteRenderers;
+    private Color[] normalRendererColors;
+    private bool hasCachedRendererColors;
+    private float enragedUntilTime;
+    private bool hasRoared; 
 
     void Start()
     {
@@ -21,60 +43,198 @@ public class EnemyAI : MonoBehaviour
         {
             currentGridPos = TileManager.Instance.GameMap.WorldToGridPos(transform.position);
             transform.position = TileManager.Instance.GameMap.GridToWorldPos(currentGridPos);
+            moveStartWorldPos = transform.position;
+            moveTargetWorldPos = transform.position;
+            moveVisuals = GetComponent<TickMoveVisuals>();
+            if (moveVisuals == null) moveVisuals = gameObject.AddComponent<TickMoveVisuals>();
+            targetMarker = MoveTargetMarker.Create($"{name}_PlannedTarget", 5);
+            ApplyEnragedVisual();
             RegisterPosition(currentGridPos);
         }
 
         if (TickManager.Instance != null)
-            TickManager.Instance.OnEnemyTick += OnTick;
+        {
+            TickManager.Instance.OnEnemyPlanTick += OnPlanTick;
+            TickManager.Instance.OnEnemyMoveTick += OnMoveTick;
+            nextPlanTick = TickManager.Instance.CurrentTick + 1;
+        }
     }
 
     void OnDestroy()
     {
         if (TickManager.Instance != null)
-            TickManager.Instance.OnEnemyTick -= OnTick;
+        {
+            TickManager.Instance.OnEnemyPlanTick -= OnPlanTick;
+            TickManager.Instance.OnEnemyMoveTick -= OnMoveTick;
+        }
         
         UnregisterPosition(currentGridPos);
+        if (targetMarker != null) Destroy(targetMarker.gameObject);
     }
 
-    void OnTick()
+    void Update()
     {
-        // 乌龟休息逻辑
-        if (enemyType == MaskType.Turtle)
+        UpdateMoveAnimation();
+        UpdateEnragedTimer();
+    }
+
+    void OnPlanTick(int tick)
+    {
+        if (tick != nextPlanTick) return;
+
+        if (enemyType == MaskType.Dragon && !hasRoared)
         {
-            if (isTurtleResting) { isTurtleResting = false; return; }
+            RuaaaBroadcast.Broadcast(transform.position);
+            hasRoared = true;
         }
 
-        // 1. 移动逻辑
-        PerformMove();
+        hasPlannedMove = TryPlanMove(out plannedTargetPos);
+        plannedMoveTick = tick + 1;
+        nextPlanTick = tick + GetMoveInterval();
 
-        // 2. 移动完后，立刻检测周围有没有倒霉蛋 (AOE击杀)
-        CheckSurroundingKills();
-
-        // 乌龟状态更新
-        if (enemyType == MaskType.Turtle) isTurtleResting = true;
+        if (hasPlannedMove)
+        {
+            ShowPlannedTarget(plannedTargetPos);
+        }
+        else if (targetMarker != null)
+        {
+            targetMarker.Hide();
+        }
     }
 
-    void PerformMove()
+    void OnMoveTick(int tick)
+    {
+        if (!hasPlannedMove || tick != plannedMoveTick) return;
+
+        hasPlannedMove = false;
+        if (targetMarker != null) targetMarker.Hide();
+
+        if (CanMoveTo(plannedTargetPos))
+        {
+            MoveTo(plannedTargetPos);
+        }
+
+        CheckSurroundingKills();
+    }
+
+    int GetMoveInterval()
+    {
+        return enemyType == MaskType.Turtle ? turtleMoveInterval : normalMoveInterval;
+    }
+
+    bool TryPlanMove(out Vector2Int targetPos)
     {
         List<Vector2Int> candidates = GetMovePattern();
+        targetPos = currentGridPos;
+
+        if (enraged && TryFindChaseMove(candidates, out targetPos))
+        {
+            return true;
+        }
+
         List<Vector2Int> validMoves = new List<Vector2Int>();
-        
         foreach (var moveVec in candidates)
         {
-            Vector2Int targetPos = currentGridPos + moveVec;
-            // 现在的 CanMoveTo 只负责检查能不能走（墙、出界、同类）
-            // 不再负责击杀，因为击杀逻辑独立出来了
-            if (CanMoveTo(targetPos))
+            Vector2Int candidate = currentGridPos + moveVec;
+            if (CanMoveTo(candidate))
             {
-                validMoves.Add(targetPos);
+                validMoves.Add(candidate);
             }
         }
 
-        if (validMoves.Count > 0)
+        if (validMoves.Count == 0) return false;
+
+        int rnd = Random.Range(0, validMoves.Count);
+        targetPos = validMoves[rnd];
+        return true;
+    }
+
+    bool TryFindChaseMove(List<Vector2Int> candidates, out Vector2Int targetPos)
+    {
+        targetPos = currentGridPos;
+        PlayerController player = FindAnyObjectByType<PlayerController>();
+        if (player == null) return false;
+
+        int bestDistance = int.MaxValue;
+        bool foundMove = false;
+
+        foreach (var moveVec in candidates)
         {
-            int rnd = Random.Range(0, validMoves.Count);
-            MoveTo(validMoves[rnd]);
+            Vector2Int candidate = currentGridPos + moveVec;
+            if (!CanMoveTo(candidate)) continue;
+
+            int distance = Mathf.Abs(candidate.x - player.currentGridPos.x) + Mathf.Abs(candidate.y - player.currentGridPos.y);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                targetPos = candidate;
+                foundMove = true;
+            }
         }
+
+        return foundMove;
+    }
+
+    void ShowPlannedTarget(Vector2Int targetPos)
+    {
+        if (targetMarker == null) return;
+
+        Color color = TickMoveVisuals.GetColor(enemyType);
+        if (enraged) color = Color.red;
+        targetMarker.Show(TileManager.Instance.GameMap.GridToWorldPos(targetPos), color, 0.92f);
+    }
+
+    public void ReceiveRuaaaBroadcast(Vector3 origin, float duration)
+    {
+        SetEnragedFor(duration);
+    }
+
+    public void SetEnragedFor(float duration)
+    {
+        enragedUntilTime = Mathf.Max(enragedUntilTime, Time.time + duration);
+        SetEnraged(true);
+    }
+
+    void UpdateEnragedTimer()
+    {
+        if (enraged && Time.time >= enragedUntilTime)
+        {
+            SetEnraged(false);
+        }
+    }
+
+    public void SetEnraged(bool value)
+    {
+        enraged = value;
+        if (!value) enragedUntilTime = 0f;
+        ApplyEnragedVisual();
+    }
+
+    void ApplyEnragedVisual()
+    {
+        CacheRendererColors();
+
+        for (int i = 0; i < spriteRenderers.Length; i++)
+        {
+            if (spriteRenderers[i] == null) continue;
+            spriteRenderers[i].color = enraged
+                ? Color.Lerp(normalRendererColors[i], Color.red, 0.55f)
+                : normalRendererColors[i];
+        }
+    }
+
+    void CacheRendererColors()
+    {
+        if (hasCachedRendererColors) return;
+
+        spriteRenderers = GetComponentsInChildren<SpriteRenderer>();
+        normalRendererColors = new Color[spriteRenderers.Length];
+        for (int i = 0; i < spriteRenderers.Length; i++)
+        {
+            normalRendererColors[i] = Color.white;
+        }
+
+        hasCachedRendererColors = true;
     }
 
     // --- 核心新功能：向量旋转 ---
@@ -92,6 +252,22 @@ public class EnemyAI : MonoBehaviour
     // --- 核心新功能：周围击杀 (九宫格检测) ---
     void CheckSurroundingKills()
     {
+        PlayerController trackedPlayer = FindAnyObjectByType<PlayerController>();
+        if (trackedPlayer != null && trackedPlayer.currentMask != this.enemyType)
+        {
+            int dx = Mathf.Abs(trackedPlayer.currentGridPos.x - currentGridPos.x);
+            int dy = Mathf.Abs(trackedPlayer.currentGridPos.y - currentGridPos.y);
+            if (dx <= 1 && dy <= 1)
+            {
+                Debug.Log($"Caught by {enemyType}");
+                if (GameManager.Instance != null)
+                {
+                    GameManager.Instance.TriggerGameOver(enemyType.ToString());
+                }
+                return;
+            }
+        }
+
         var map = TileManager.Instance.GameMap;
 
         // 遍历 x: -1 to 1, y: -1 to 1 (包括自己脚下)
@@ -150,6 +326,12 @@ public class EnemyAI : MonoBehaviour
                 moves.Add(new Vector2Int(0, 2)); moves.Add(new Vector2Int(0, -2));
                 moves.Add(new Vector2Int(-2, 0)); moves.Add(new Vector2Int(2, 0));
                 break;
+            case MaskType.Dragon:
+                moves.Add(Vector2Int.up); moves.Add(Vector2Int.down);
+                moves.Add(Vector2Int.left); moves.Add(Vector2Int.right);
+                moves.Add(new Vector2Int(1, 1)); moves.Add(new Vector2Int(1, -1));
+                moves.Add(new Vector2Int(-1, 1)); moves.Add(new Vector2Int(-1, -1));
+                break;
             default: // Turtle/Normal
                 moves.Add(Vector2Int.up); moves.Add(Vector2Int.down);
                 moves.Add(Vector2Int.left); moves.Add(Vector2Int.right);
@@ -193,7 +375,43 @@ public class EnemyAI : MonoBehaviour
         RegisterPosition(currentGridPos);
 
         // 3. 物理位移
-        transform.position = map.GridToWorldPos(currentGridPos);
+        Vector3 targetWorldPos = map.GridToWorldPos(currentGridPos);
+        StartMoveAnimation(targetWorldPos);
+        if (moveVisuals != null)
+        {
+            moveVisuals.Play(enemyType, targetWorldPos - moveStartWorldPos);
+        }
+    }
+
+    void StartMoveAnimation(Vector3 targetWorldPos)
+    {
+        if (moveAnimationDuration <= 0f)
+        {
+            transform.position = targetWorldPos;
+            isMoveAnimating = false;
+            return;
+        }
+
+        moveStartWorldPos = transform.position;
+        moveTargetWorldPos = targetWorldPos;
+        moveAnimationTimer = 0f;
+        isMoveAnimating = true;
+    }
+
+    void UpdateMoveAnimation()
+    {
+        if (!isMoveAnimating) return;
+
+        moveAnimationTimer += Time.deltaTime;
+        float t = Mathf.Clamp01(moveAnimationTimer / moveAnimationDuration);
+        t = t * t * (3f - 2f * t);
+        transform.position = Vector3.LerpUnclamped(moveStartWorldPos, moveTargetWorldPos, t);
+
+        if (t >= 1f)
+        {
+            transform.position = moveTargetWorldPos;
+            isMoveAnimating = false;
+        }
     }
 
     void RegisterPosition(Vector2Int pos)

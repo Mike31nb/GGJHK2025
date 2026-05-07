@@ -31,6 +31,12 @@ public class GameManager : MonoBehaviour
     public Image winBackgroundPanel;    
     public Button winRestartButton;     // 胜利按钮：改为前往下一关
 
+    [Header("Debug")]
+    public bool debugObserverMode = false;
+    public KeyCode toggleDebugObserverKey = KeyCode.F1;
+
+    public bool DebugObserverMode => debugObserverMode;
+
     void Awake()
     {
         Instance = this;
@@ -56,6 +62,14 @@ public class GameManager : MonoBehaviour
         UpdateTimerUI();
     }
 
+    void Update()
+    {
+        if (Input.GetKeyDown(toggleDebugObserverKey))
+        {
+            SetDebugObserverMode(!debugObserverMode);
+        }
+    }
+
     void OnDestroy()
     {
         if (TickManager.Instance != null)
@@ -67,6 +81,7 @@ public class GameManager : MonoBehaviour
     void OnTick()
     {
         if (TickManager.Instance.IsPaused) return;
+        if (debugObserverMode) return;
 
         currentTicksPassed++;
         UpdateTimerUI();
@@ -81,6 +96,13 @@ public class GameManager : MonoBehaviour
     {
         if (timerText != null)
         {
+            if (debugObserverMode)
+            {
+                timerText.text = "DEBUG GHOST";
+                timerText.color = Color.cyan;
+                return;
+            }
+
             int ticksLeft = Mathf.Max(0, targetSurvivalTicks - currentTicksPassed);
             timerText.text = $"SURVIVE: {ticksLeft}";
             
@@ -91,6 +113,12 @@ public class GameManager : MonoBehaviour
 
     public void TriggerGameOver(string killerName)
     {
+        if (debugObserverMode)
+        {
+            Debug.Log($"Debug ghost ignored death by {killerName}");
+            return;
+        }
+
         if (TickManager.Instance.IsPaused) return; 
         
         Debug.Log("Game Over!");
@@ -158,6 +186,21 @@ public class GameManager : MonoBehaviour
         {
             buttonToActivate.gameObject.SetActive(true);
         }
+    }
+
+    public void SetDebugObserverMode(bool enabled)
+    {
+        debugObserverMode = enabled;
+
+        if (enabled)
+        {
+            if (TickManager.Instance != null) TickManager.Instance.IsPaused = false;
+            if (gameOverCanvas != null) gameOverCanvas.SetActive(false);
+            if (winCanvas != null) winCanvas.SetActive(false);
+        }
+
+        UpdateTimerUI();
+        Debug.Log(enabled ? "Debug ghost mode ON" : "Debug ghost mode OFF");
     }
 
     // --- 失败时调用：重开当前场景 ---

@@ -52,7 +52,11 @@ public class TickManager : MonoBehaviour
     
     // 分成两个阶段
     public event Action OnPlayerTick; // 阶段1：玩家先动
-    public event Action OnEnemyTick;  // 阶段2：敌人后动，并进行收割判定
+    public event Action<int> OnEnemyPlanTick;
+    public event Action<int> OnEnemyMoveTick;
+    public event Action OnEnemyTick;  // 兼容旧系统：每个世界tick都会触发
+
+    public int CurrentTick { get; private set; }
     
     void Awake()
     {
@@ -86,19 +90,17 @@ public class TickManager : MonoBehaviour
 
     void FireTick()
     {
+        CurrentTick++;
         PlayTickSound();
         
-        
-        // 1. 先让玩家走，更新完 GridNode 的占位信息
+        // 1. 玩家每个 Tick 先执行自己的格子移动。
         OnPlayerTick?.Invoke();
         
-        
-        // 2. 再让敌人走，基于玩家最新的位置进行移动和击杀判定
+        // 2. 敌人各自根据 cadence 决定是否在本 Tick 移动/预告。
+        OnEnemyMoveTick?.Invoke(CurrentTick);
+        OnEnemyPlanTick?.Invoke(CurrentTick);
+
         OnEnemyTick?.Invoke();
-        
-        
-      
-        
     }
     
     void PlayTickSound()

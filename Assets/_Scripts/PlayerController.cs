@@ -13,12 +13,23 @@ public class PlayerController : MonoBehaviour
     [Header("视觉组件")] // --- 新增 ---
     private SpriteRenderer myRenderer; // 自己的渲染器
     private Sprite defaultSprite;      // 自己原本的图片 (没面具时的样子)
+
+    [Header("移动表现")]
+    public float moveAnimationDuration = 0.22f;
+    public bool freeMovementMode = false;
+    public float freeMoveSpeed = 4f;
+    private Vector3 moveStartWorldPos;
+    private Vector3 moveTargetWorldPos;
+    private float moveAnimationTimer;
+    private bool isMoveAnimating;
+    private TickMoveVisuals moveVisuals;
     
     // [Header("配置 (请把做好的面具Prefab拖到这里)")]
     // public List<MaskPrefabMapping> maskPrefabs;
     
     // 乌龟的休息标记
     private bool isTurtleResting = false;
+    private MoveTargetMarker targetMarker;
 
     // --- 新架构核心 ---
     // 1. 玩家实际按下的键（例如：只按了W，这里就是 [Up]）
@@ -39,9 +50,17 @@ public class PlayerController : MonoBehaviour
         // 2. 初始化位置
         currentGridPos = TileManager.Instance.GameMap.WorldToGridPos(transform.position);
         transform.position = TileManager.Instance.GameMap.GridToWorldPos(currentGridPos);
+        moveStartWorldPos = transform.position;
+        moveTargetWorldPos = transform.position;
+        moveVisuals = GetComponent<TickMoveVisuals>();
+        if (moveVisuals == null) moveVisuals = gameObject.AddComponent<TickMoveVisuals>();
+        targetMarker = MoveTargetMarker.Create($"{name}_InputTarget", 6);
         
         // 3. 注册占用
-        UpdateMapOccupancy(currentGridPos, currentGridPos);
+        if (!freeMovementMode)
+        {
+            UpdateMapOccupancy(currentGridPos, currentGridPos);
+        }
 
         // 4. 【修复】更安全的订阅 Tick
         if (TickManager.Instance == null)
@@ -75,16 +94,39 @@ public class PlayerController : MonoBehaviour
     {
         if(TickManager.Instance != null)
             TickManager.Instance.OnPlayerTick -= HandleTickMovement;
+
+        if (targetMarker != null) Destroy(targetMarker.gameObject);
     }
 
     void Update()
     {
+        UpdateMoveAnimation();
+
+        PlayerInputSignal inputSignal = PlayerInputReader.Read();
+        if (inputSignal.RuaaaPressed)
+        {
+            RuaaaBroadcast.Broadcast(transform.position);
+        }
+
+        if (GameManager.Instance != null && GameManager.Instance.DebugObserverMode) return;
+
         // --- Debug: 数字键切换面具 ---
         if (Input.GetKeyDown(KeyCode.Alpha1)) ChangeMask(MaskType.None);
         if (Input.GetKeyDown(KeyCode.Alpha2)) ChangeMask(MaskType.Turtle);
         if (Input.GetKeyDown(KeyCode.Alpha3)) ChangeMask(MaskType.Ox);
         if (Input.GetKeyDown(KeyCode.Alpha4)) ChangeMask(MaskType.Hawk);
         if (Input.GetKeyDown(KeyCode.Alpha5)) ChangeMask(MaskType.Fox);
+
+        if (Input.GetKeyDown(KeyCode.G))
+        {
+            DropCurrentMask();
+        }
+
+        if (freeMovementMode)
+        {
+            HandleFreeMovement(inputSignal);
+            return;
+        }
 
         // --- 捕获输入 ---
         if (Input.GetKeyDown(KeyCode.W)) AddInput(Vector2Int.up);
@@ -100,13 +142,120 @@ public class PlayerController : MonoBehaviour
         }
 
         // --- 1. 丢弃面具 (按 G) ---
-        if (Input.GetKeyDown(KeyCode.G))
-        {
-            DropCurrentMask();
-        }
         
         // Debug Log (可选)
         // if (rawInputStack.Count > 0) Debug.Log($"Input: {rawInputStack.Count}, Path: {finalPredictedPath.Count}");
+    }
+
+    void HandleFreeMovement(PlayerInputSignal inputSignal)
+    {
+        HidePredictedTarget();
+        rawInputStack.Clear();
+        finalPredictedPath.Clear();
+
+        Vector3 moveDir = GetFreeMovementDirection(inputSignal);
+        float speed = freeMoveSpeed * GetFreeMovementSpeedMultiplier();
+        Vector3 nextPosition = transform.position + moveDir * speed * Time.deltaTime;
+        if (CanFreeMoveTo(nextPosition))
+        {
+            transform.position = nextPosition;
+        }
+
+        UpdateFreeGridPosition();
+    }
+
+    Vector3 GetFreeMovementDirection(PlayerInputSignal inputSignal)
+    {
+        if (!inputSignal.HasMove)
+        {
+            return Vector3.zero;
+        }
+
+        switch (currentMask)
+        {
+            case MaskType.Fox:
+                return GetFoxFreeDirection(inputSignal);
+            case MaskType.Ox:
+                return GetOxFreeDirection(inputSignal.DigitalMove);
+            default:
+                return new Vector3(inputSignal.AnalogMove.x, inputSignal.AnalogMove.y, 0f);
+        }
+    }
+
+    Vector3 GetFoxFreeDirection(PlayerInputSignal inputSignal)
+    {
+        Vector2Int first = inputSignal.FirstHeldMove;
+        Vector2Int second = inputSignal.SecondHeldMove;
+
+        if (first == Vector2Int.zero)
+        {
+            return Vector3.zero;
+        }
+
+        if (second == Vector2Int.zero || first.x == second.x || first.y == second.y)
+        {
+            second = GetCounterClockwiseDir(first);
+        }
+
+        Vector3 dir = new Vector3(first.x * 2 + second.x, first.y * 2 + second.y, 0f);
+        return dir.normalized;
+    }
+
+    Vector3 GetOxFreeDirection(Vector2Int input)
+    {
+        float x = input.x;
+        float y = input.y;
+
+        if (x == 0 && y != 0)
+        {
+            x = y;
+        }
+        else if (y == 0 && x != 0)
+        {
+            y = x;
+        }
+
+        return new Vector3(x, y, 0f).normalized;
+    }
+
+    float GetFreeMovementSpeedMultiplier()
+    {
+        switch (currentMask)
+        {
+            case MaskType.Hawk:
+                return 2f;
+            case MaskType.Turtle:
+                return 0.5f;
+            default:
+                return 1f;
+        }
+    }
+
+    bool CanFreeMoveTo(Vector3 worldPos)
+    {
+        if (TileManager.Instance == null || TileManager.Instance.GameMap == null) return true;
+
+        var map = TileManager.Instance.GameMap;
+        Vector2Int gridPos = map.WorldToGridPos(worldPos);
+        if (!map.IsValid(gridPos)) return false;
+
+        GridNode node = map.GetNode(gridPos);
+        if (currentMask != MaskType.Hawk && (node.Type == TileType.Wall || node.Type == TileType.Void)) return false;
+        if (node.IsOccupied && node.Occupant != gameObject) return false;
+        return true;
+    }
+
+    void UpdateFreeGridPosition()
+    {
+        if (TileManager.Instance == null || TileManager.Instance.GameMap == null) return;
+
+        Vector2Int newGridPos = TileManager.Instance.GameMap.WorldToGridPos(transform.position);
+        if (newGridPos != currentGridPos)
+        {
+            currentGridPos = newGridPos;
+        }
+
+        TryCollectMaskAt(currentGridPos);
     }
 
     // --- 核心：处理输入堆栈逻辑 (已修改) ---
@@ -162,6 +311,7 @@ public class PlayerController : MonoBehaviour
         if (rawInputStack.Count == 0) 
         {
             UpdateUIDirection(finalPredictedPath);
+            HidePredictedTarget();
             return;
         }
 
@@ -233,6 +383,7 @@ public class PlayerController : MonoBehaviour
         }
 
         UpdateUIDirection(finalPredictedPath);
+        ShowPredictedTarget();
     }
 
     // --- 辅助：逆时针计算 (Counter-Clockwise) ---
@@ -249,6 +400,8 @@ public class PlayerController : MonoBehaviour
     // --- Tick 执行 ---
     void HandleTickMovement()
     {
+        if (freeMovementMode) return;
+
         // 乌龟休息逻辑
         if (currentMask == MaskType.Turtle && isTurtleResting)
         {
@@ -277,7 +430,8 @@ public class PlayerController : MonoBehaviour
         // 移动结束，清空输入
         rawInputStack.Clear();
         finalPredictedPath.Clear();
-        UpdateUIDirection(finalPredictedPath); 
+        UpdateUIDirection(finalPredictedPath);
+        HidePredictedTarget(); 
     }
     
     // --- 移动与判定 ---
@@ -316,33 +470,7 @@ public class PlayerController : MonoBehaviour
         }
 
         // 3. 捡面具
-        if (targetNode.Collectible != null)
-        {
-            var itemScript = targetNode.Collectible.GetComponent<Mask>(); 
-            if (itemScript != null)
-            {
-                // =========== 视觉替换逻辑 START ===========
-                // 1. 获取地上面具物体的渲染器
-                var itemRenderer = targetNode.Collectible.GetComponentInChildren<SpriteRenderer>();
-                
-                // 2. 如果找到了，就把它的 Sprite 拿过来给自己用
-                if (itemRenderer != null && myRenderer != null)
-                {
-                    myRenderer.sprite = itemRenderer.sprite;
-                    
-                    // (可选) 如果你的面具有颜色染色，也可以把颜色同步过来
-                    myRenderer.color = itemRenderer.color; 
-                }
-                // =========== 视觉替换逻辑 END =============
-
-                ChangeMask(itemScript.maskType); 
-                Destroy(targetNode.Collectible);
-                
-                var node = map.GetNode(targetPos);
-                node.Collectible = null;
-                map.SetNode(targetPos, node);
-            }
-        }
+        TryCollectMaskAt(targetPos);
 
         // 4. 执行移动
         UpdateMapOccupancy(currentGridPos, targetPos);
@@ -354,7 +482,42 @@ public class PlayerController : MonoBehaviour
         {
             worldPos.y += 0.2f; // 视觉上站高一点
         }
-        transform.position = worldPos;
+        StartMoveAnimation(worldPos);
+        if (moveVisuals != null)
+        {
+            moveVisuals.Play(currentMask, worldPos - moveStartWorldPos);
+        }
+    }
+
+    void StartMoveAnimation(Vector3 targetWorldPos)
+    {
+        if (moveAnimationDuration <= 0f)
+        {
+            transform.position = targetWorldPos;
+            isMoveAnimating = false;
+            return;
+        }
+
+        moveStartWorldPos = transform.position;
+        moveTargetWorldPos = targetWorldPos;
+        moveAnimationTimer = 0f;
+        isMoveAnimating = true;
+    }
+
+    void UpdateMoveAnimation()
+    {
+        if (!isMoveAnimating) return;
+
+        moveAnimationTimer += Time.deltaTime;
+        float t = Mathf.Clamp01(moveAnimationTimer / moveAnimationDuration);
+        t = t * t * (3f - 2f * t);
+        transform.position = Vector3.LerpUnclamped(moveStartWorldPos, moveTargetWorldPos, t);
+
+        if (t >= 1f)
+        {
+            transform.position = moveTargetWorldPos;
+            isMoveAnimating = false;
+        }
     }
 
     void ChangeMask(MaskType newMask)
@@ -365,6 +528,33 @@ public class PlayerController : MonoBehaviour
         rawInputStack.Clear();
         RecalculatePath();
         Debug.Log($"Mask Switched: {newMask}");
+    }
+
+    void TryCollectMaskAt(Vector2Int gridPos)
+    {
+        if (TileManager.Instance == null || TileManager.Instance.GameMap == null) return;
+
+        var map = TileManager.Instance.GameMap;
+        if (!map.IsValid(gridPos)) return;
+
+        var node = map.GetNode(gridPos);
+        if (node.Collectible == null) return;
+
+        var itemScript = node.Collectible.GetComponent<Mask>();
+        if (itemScript == null) return;
+
+        var itemRenderer = node.Collectible.GetComponentInChildren<SpriteRenderer>();
+        if (itemRenderer != null && myRenderer != null)
+        {
+            myRenderer.sprite = itemRenderer.sprite;
+            myRenderer.color = itemRenderer.color;
+        }
+
+        ChangeMask(itemScript.maskType);
+        Destroy(node.Collectible);
+
+        node.Collectible = null;
+        map.SetNode(gridPos, node);
     }
 
     void UpdateMapOccupancy(Vector2Int oldPos, Vector2Int newPos)
@@ -395,7 +585,31 @@ public class PlayerController : MonoBehaviour
             start += new Vector3(dir.x, dir.y, 0);
         }
     }
-    
+    void HidePredictedTarget()
+    {
+        if (targetMarker != null) targetMarker.Hide();
+    }
+
+    void ShowPredictedTarget()
+    {
+        if (targetMarker == null || finalPredictedPath.Count == 0 || TileManager.Instance == null) return;
+
+        Vector2Int totalDelta = Vector2Int.zero;
+        foreach (var step in finalPredictedPath)
+        {
+            totalDelta += step;
+        }
+
+        Vector2Int targetPos = currentGridPos + totalDelta;
+        var map = TileManager.Instance.GameMap;
+        if (!map.IsValid(targetPos))
+        {
+            HidePredictedTarget();
+            return;
+        }
+
+        targetMarker.Show(map.GridToWorldPos(targetPos), new Color(0.25f, 1f, 0.35f, 0.85f), 0.8f);
+    }
     
     void DropCurrentMask()
     {
